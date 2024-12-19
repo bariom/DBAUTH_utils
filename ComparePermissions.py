@@ -72,7 +72,10 @@ app.layout = dbc.Container([
         dbc.Col(html.Button("Confronta", id="compare-button", n_clicks=0, className="btn btn-primary"), width=2)
     ], justify="between"),
     dbc.Row([
-        dbc.Col(dbc.Switch(id="toggle-notifications", label="Abilita notifiche", value=True), width=12, className="mb-3")
+        dbc.Col([
+            dbc.Switch(id="toggle-notifications", label="Abilita notifiche", value=True, className="me-3"),
+            dbc.Button("Filtra", id="open-filter-button", size="sm", className="btn-secondary")
+        ], width=12, className="mb-3 d-flex justify-content-start align-items-center")
     ]),
     dbc.Row([
         dbc.Col(dash_table.DataTable(
@@ -118,6 +121,27 @@ app.layout = dbc.Container([
         is_open=False,
         placement="end",
         style={"width": "300px"}
+    ),
+    dbc.Offcanvas(
+        id="filter-status",
+        title="Filtra per Status",
+        is_open=False,
+        placement="start",
+        style={"width": "300px"},
+        children=[
+            dbc.Checklist(
+                id="status-filter",
+                options=[
+                    {"label": "Comuni", "value": "Comuni"},
+                    {"label": "Unico a Sinistra", "value": "Unico a Sinistra"},
+                    {"label": "Unico a Destra", "value": "Unico a Destra"},
+                    {"label": "Differenti", "value": "Differenti"}
+                ],
+                value=[],
+                inline=True
+            ),
+            html.Button("Applica Filtro", id="apply-filter", className="btn btn-primary mt-3")
+        ]
     )
 ], fluid=True)
 
@@ -137,6 +161,17 @@ def get_domains_options():
 def populate_domains(_):
     options = get_domains_options()
     return options, options
+
+# Callback per aprire il pannello filtri
+@app.callback(
+    Output("filter-status", "is_open"),
+    [Input("open-filter-button", "n_clicks")],
+    [State("filter-status", "is_open")]
+)
+def toggle_filter_panel(n_clicks, is_open):
+    if n_clicks:
+        return not is_open
+    return is_open
 
 # Funzione per il confronto
 def compare_permissions(left_domains, right_domains):
@@ -178,10 +213,10 @@ def compare_permissions(left_domains, right_domains):
 
 @app.callback(
     [Output("comparison-table", "data"), Output("update-result", "children"), Output("update-result", "is_open")],
-    [Input("compare-button", "n_clicks"), Input("comparison-table", "active_cell")],
-    [State("left-domains", "value"), State("right-domains", "value"), State("comparison-table", "data"), State("toggle-notifications", "value")]
+    [Input("compare-button", "n_clicks"), Input("comparison-table", "active_cell"), Input("apply-filter", "n_clicks")],
+    [State("left-domains", "value"), State("right-domains", "value"), State("comparison-table", "data"), State("toggle-notifications", "value"), State("status-filter", "value")]
 )
-def update_comparison_and_handle_action(compare_clicks, active_cell, left_domains, right_domains, table_data, notifications_enabled):
+def update_comparison_and_handle_action(compare_clicks, active_cell, apply_filter_clicks, left_domains, right_domains, table_data, notifications_enabled, status_filter):
     ctx_trigger = ctx.triggered_id
 
     if ctx_trigger == "compare-button":
@@ -192,6 +227,9 @@ def update_comparison_and_handle_action(compare_clicks, active_cell, left_domain
 
         if comparison.empty:
             return [], "Nessun dato disponibile per il confronto.", notifications_enabled
+
+        if status_filter:
+            comparison = comparison[comparison["Status"].isin(status_filter)]
 
         return comparison.to_dict("records"), "Confronto completato.", notifications_enabled
 
@@ -226,10 +264,24 @@ def update_comparison_and_handle_action(compare_clicks, active_cell, left_domain
                     )
 
             updated_comparison = compare_permissions(left_domains, right_domains)
+
+            if status_filter:
+                updated_comparison = updated_comparison[updated_comparison["Status"].isin(status_filter)]
+
             return updated_comparison.to_dict("records"), result, notifications_enabled
 
         except Exception as e:
             return table_data, f"Errore: {str(e)}", notifications_enabled
+
+    elif ctx_trigger == "apply-filter":
+        if not table_data:
+            return [], "Nessun dato disponibile per il confronto.", notifications_enabled
+
+        filtered_data = pd.DataFrame(table_data)
+        if status_filter:
+            filtered_data = filtered_data[filtered_data["Status"].isin(status_filter)]
+
+        return filtered_data.to_dict("records"), "Filtro applicato.", notifications_enabled
 
     return dash.no_update, dash.no_update, dash.no_update
 
