@@ -6,12 +6,13 @@ import dash_bootstrap_components as dbc
 
 # Funzione per connettersi al database
 def connect_to_db():
-    return jaydebeapi.connect(
+    conn = jaydebeapi.connect(
         'com.ibm.as400.access.AS400JDBCDriver',
         'jdbc:as400://p10lug/BPSAUTHNEW',  # Sostituisci con i dettagli del tuo server e database
         ['nextlux', 'next'],  # Sostituisci con le credenziali
         'C:/temp/jt400.jar'  # Path al driver JDBC
     )
+    return conn
 
 # Funzione per recuperare i permessi
 def fetch_permissions(conn, domains):
@@ -57,57 +58,18 @@ def update_or_insert_permission(conn, ext_id, name, action):
             return f"Inserito: {name} in {ext_id} con ACTION = {action}"
 
 # Funzione per eliminare un record
-def delete_permission(conn, ext_id, name):
+def delete_permission(conn, ext_id, name, action):
     with conn.cursor() as cursor:
-        query_delete = "DELETE FROM PERMISSION WHERE EXT_ID = ? AND NAME = ?"
-        cursor.execute(query_delete, [ext_id, name])
+        query_delete = """
+        DELETE FROM PERMISSION
+        WHERE EXT_ID = ? AND NAME = ? AND ACTION = ?
+        """
+        cursor.execute(query_delete, [ext_id, name, action])
         conn.commit()
-        return f"Eliminato: {name} da {ext_id}"
-
-def compare_permissions(left_domains, right_domains):
-    try:
-        with connect_to_db() as conn:
-            left_permissions = fetch_permissions(conn, left_domains)
-            right_permissions = fetch_permissions(conn, right_domains)
-
-        comparison = pd.merge(
-            left_permissions,
-            right_permissions,
-            on="NAME",
-            how="outer",
-            suffixes=("_left", "_right"),
-            indicator=True
-        )
-
-        comparison["ACTION_left"] = comparison["ACTION_left"].astype(str).replace("nan", "-")
-        comparison["ACTION_right"] = comparison["ACTION_right"].astype(str).replace("nan", "-")
-
-        def classify_status(row):
-            if row["ACTION_left"] == row["ACTION_right"]:
-                return "Comuni"
-            elif row["ACTION_left"] == "-":
-                return "Unico a Destra"
-            elif row["ACTION_right"] == "-":
-                return "Unico a Sinistra"
-            else:
-                return "Differenti"
-
-        comparison["Status"] = comparison.apply(classify_status, axis=1)
-        comparison["Action"] = comparison.apply(
-            lambda row: f"Aggiorna" if row["Status"] not in ["Comuni", "Unico a Destra"] else "-",
-            axis=1
-        )
-        comparison["Delete"] = comparison.apply(
-            lambda row: f"Elimina" if row["Status"] == "Comuni" else "-",
-            axis=1
-        )
-        return comparison
-    except Exception as e:
-        return pd.DataFrame()
-
+        return f"Eliminato: {name} con ACTION = {action} da {ext_id}"
 
 # App Dash
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Confronto Permission Domain"
 
 # Layout iniziale
@@ -123,7 +85,7 @@ app.layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             dbc.Switch(id="toggle-notifications", label="Abilita notifiche", value=True, className="me-3"),
-            dbc.Button("Filtra", id="open-filter-button", size="sm", className="btn-secondary ms-2")
+            dbc.Button("Filtra", id="open-filter-button", size="sm", className="btn-secondary")
         ], width=12, className="mb-3 d-flex justify-content-start align-items-center")
     ]),
     dbc.Row([
@@ -165,13 +127,7 @@ app.layout = dbc.Container([
             ]
         ), width=12)
     ]),
-    dbc.Alert(
-        id="notification-alert",
-        dismissable=True,
-        is_open=False,
-        duration=4000,
-        className="mt-3"
-    ),
+    dbc.Alert(id="notification-alert", dismissable=True, is_open=False, duration=4000),
     dbc.Offcanvas(
         id="filter-status",
         title="Filtra per Status",
@@ -196,19 +152,22 @@ app.layout = dbc.Container([
 ], fluid=True)
 
 # Callback per popolare i dropdown
+def get_domains_options():
+    try:
+        with connect_to_db() as conn:
+            domains = fetch_permission_domains(conn)
+        return [{"label": domain, "value": domain} for domain in domains]
+    except Exception as e:
+        return []
+
 @app.callback(
     [Output('left-domains', 'options'), Output('right-domains', 'options')],
     [Input('compare-button', 'n_clicks')]
 )
 def populate_domains(_):
-    try:
-        with connect_to_db() as conn:
-            domains = fetch_permission_domains(conn)
-        return [{"label": domain, "value": domain} for domain in domains], [{"label": domain, "value": domain} for domain in domains]
-    except Exception as e:
-        return [], []
+    options = get_domains_options()
+    return options, options
 
-# Callback per aprire il pannello filtri
 @app.callback(
     Output("filter-status", "is_open"),
     [Input("open-filter-button", "n_clicks")],
@@ -219,7 +178,47 @@ def toggle_filter_panel(n_clicks, is_open):
         return not is_open
     return is_open
 
-# Callback per notifiche e aggiornamenti
+def compare_permissions(left_domains, right_domains):
+    try:
+        with connect_to_db() as conn:
+            left_permissions = fetch_permissions(conn, left_domains)
+            right_permissions = fetch_permissions(conn, right_domains)
+
+        comparison = pd.merge(
+            left_permissions,
+            right_permissions,
+            on="NAME",
+            how="outer",
+            suffixes=("_left", "_right"),
+            indicator=True
+        )
+
+        comparison["ACTION_left"] = comparison["ACTION_left"].astype(str).replace("nan", "-")
+        comparison["ACTION_right"] = comparison["ACTION_right"].astype(str).replace("nan", "-")
+
+        def classify_status(row):
+            if row["ACTION_left"] == row["ACTION_right"]:
+                return "Comuni"
+            elif row["ACTION_left"] == "-":
+                return "Unico a Destra"
+            elif row["ACTION_right"] == "-":
+                return "Unico a Sinistra"
+            else:
+                return "Differenti"
+
+        comparison["Status"] = comparison.apply(classify_status, axis=1)
+        comparison["Action"] = comparison.apply(
+            lambda row: f"Aggiorna" if row["Status"] not in ["Comuni", "Unico a Destra"] else "-",
+            axis=1
+        )
+        comparison["Delete"] = comparison.apply(
+            lambda row: f"Elimina" if row["Status"] in ["Comuni", "Unico a Destra"] else "-",
+            axis=1
+        )
+        return comparison
+    except Exception as e:
+        return pd.DataFrame()
+
 @app.callback(
     [Output("comparison-table", "data"),
      Output("notification-alert", "children"),
@@ -257,12 +256,34 @@ def update_comparison_and_handle_action(compare_clicks, active_cell, apply_filte
             return [], "Nessun dato disponibile per l'aggiornamento.", notifications_enabled
 
         col = active_cell.get("column_id")
-        if col != "Action" and col != "Delete":
-            return table_data, "Seleziona un'azione valida nella colonna Action o Delete.", notifications_enabled
-
         row = table_data[active_cell["row"]]
 
-        if col == "Action" and row["Action"] != "-":
+        if col == "Delete":
+            if row["Delete"] == "-":
+                return table_data, "Nessuna azione disponibile per questo record.", notifications_enabled
+
+            try:
+                with connect_to_db() as conn:
+                    result = delete_permission(
+                        conn,
+                        ext_id=row["EXT_ID_right"],
+                        name=row["NAME"],
+                        action=row["ACTION_right"]
+                    )
+                updated_comparison = compare_permissions(left_domains, right_domains)
+
+                if status_filter:
+                    updated_comparison = updated_comparison[updated_comparison["Status"].isin(status_filter)]
+
+                return updated_comparison.to_dict("records"), result, notifications_enabled
+
+            except Exception as e:
+                return table_data, f"Errore durante l'eliminazione: {str(e)}", notifications_enabled
+
+        elif col == "Action":
+            if row["Action"] == "-":
+                return table_data, "Nessuna azione disponibile per questo record.", notifications_enabled
+
             try:
                 with connect_to_db() as conn:
                     if row["Status"] == "Unico a Sinistra":
@@ -279,27 +300,18 @@ def update_comparison_and_handle_action(compare_clicks, active_cell, apply_filte
                             name=row["NAME"],
                             action=row["ACTION_left"]
                         )
-                updated_data = compare_permissions(left_domains, right_domains)
-                if status_filter:
-                    updated_data = updated_data[updated_data["Status"].isin(status_filter)]
-                return updated_data.to_dict("records"), result, notifications_enabled
-            except Exception as e:
-                return table_data, f"Errore: {str(e)}", notifications_enabled
 
-        elif col == "Delete" and row["Delete"] != "-":
-            try:
-                with connect_to_db() as conn:
-                    result = delete_permission(
-                        conn,
-                        ext_id=row["EXT_ID_right"],
-                        name=row["NAME"]
-                    )
-                updated_data = compare_permissions(left_domains, right_domains)
+                updated_comparison = compare_permissions(left_domains, right_domains)
+
                 if status_filter:
-                    updated_data = updated_data[updated_data["Status"].isin(status_filter)]
-                return updated_data.to_dict("records"), result, notifications_enabled
+                    updated_comparison = updated_comparison[updated_comparison["Status"].isin(status_filter)]
+
+                return updated_comparison.to_dict("records"), result, notifications_enabled
+
             except Exception as e:
-                return table_data, f"Errore: {str(e)}", notifications_enabled
+                return table_data, f"Errore durante l'aggiornamento: {str(e)}", notifications_enabled
+
+        return table_data, "Seleziona un'azione valida.", notifications_enabled
 
     elif ctx_trigger == "apply-filter":
         if not table_data:
