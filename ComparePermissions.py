@@ -34,6 +34,7 @@ def fetch_permission_domains(conn):
     return [row[0] for row in rows]
 
 def update_or_insert_permission(conn, ext_id, name, action):
+    class_name=f'ch.eri.core.security.TaskPermission'
     with conn.cursor() as cursor:
         query_check = "SELECT COUNT(*) FROM PERMISSION WHERE EXT_ID = ? AND NAME = ?"
         cursor.execute(query_check, [ext_id, name])
@@ -44,8 +45,8 @@ def update_or_insert_permission(conn, ext_id, name, action):
             conn.commit()
             return f"Aggiornato: {name} in {ext_id} con ACTION = {action}"
         else:
-            query_insert = "INSERT INTO PERMISSION (EXT_ID, NAME, ACTION) VALUES (?, ?, ?)"
-            cursor.execute(query_insert, [ext_id, name, action])
+            query_insert = f"INSERT INTO PERMISSION (EXT_ID, CLASS, NAME, ACTION) VALUES (?, ?, ?, ?)"
+            cursor.execute(query_insert, [ext_id, class_name, name, action])
             conn.commit()
             return f"Inserito: {name} in {ext_id} con ACTION = {action}"
 
