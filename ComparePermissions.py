@@ -4,6 +4,10 @@ import pandas as pd
 import jaydebeapi
 import dash_bootstrap_components as dbc
 
+# =============================================================================
+#  SEZIONE: Connessione al database
+#    - connect_to_db: crea una connessione a DB2/AS400 tramite il driver JDBC
+# =============================================================================
 def connect_to_db():
     conn = jaydebeapi.connect(
         'com.ibm.as400.access.AS400JDBCDriver',
@@ -13,6 +17,13 @@ def connect_to_db():
     )
     return conn
 
+# =============================================================================
+#  SEZIONE: Funzioni per il recupero e la gestione dei permessi
+#    - fetch_permissions: estrazione dei permessi in base a una lista di domini
+#    - fetch_permission_domains: estrazione dell'elenco di domini univoci
+#    - update_or_insert_permission: inserisce o aggiorna un permesso
+#    - delete_permission: elimina un permesso
+# =============================================================================
 def fetch_permissions(conn, domains):
     placeholder = ', '.join(['?' for _ in domains])
     query = f"""
@@ -34,7 +45,7 @@ def fetch_permission_domains(conn):
     return [row[0] for row in rows]
 
 def update_or_insert_permission(conn, ext_id, name, action):
-    class_name=f'ch.eri.core.security.TaskPermission'
+    class_name = 'ch.eri.core.security.TaskPermission'
     with conn.cursor() as cursor:
         query_check = "SELECT COUNT(*) FROM PERMISSION WHERE EXT_ID = ? AND NAME = ?"
         cursor.execute(query_check, [ext_id, name])
@@ -57,6 +68,11 @@ def delete_permission(conn, ext_id, name, action):
         conn.commit()
         return f"Eliminato: {name} con ACTION = {action} da {ext_id}"
 
+# =============================================================================
+#  SEZIONE: Confronto dei permessi
+#    - compare_permissions: confronta i permessi di due liste di domini
+#      e produce un DataFrame con lo stato di ogni permesso
+# =============================================================================
 def compare_permissions(left_domains, right_domains):
     with connect_to_db() as conn:
         left_permissions = fetch_permissions(conn, left_domains)
@@ -71,6 +87,7 @@ def compare_permissions(left_domains, right_domains):
         indicator=True
     )
 
+    # Sostituisce i valori nan con '-'
     comparison["ACTION_left"] = comparison["ACTION_left"].astype(str).replace("nan", "-")
     comparison["ACTION_right"] = comparison["ACTION_right"].astype(str).replace("nan", "-")
 
@@ -85,6 +102,8 @@ def compare_permissions(left_domains, right_domains):
             return "Differenti"
 
     comparison["Status"] = comparison.apply(classify_status, axis=1)
+
+    # Colonne extra per gestire le azioni in tabella
     comparison["Action"] = comparison.apply(
         lambda row: "Aggiorna" if row["Status"] not in ["Comuni", "Unico a Destra"] else "-",
         axis=1
@@ -96,6 +115,11 @@ def compare_permissions(left_domains, right_domains):
 
     return comparison
 
+# =============================================================================
+#  SEZIONE: Inizializzazione dell'app Dash con Bootstrap
+#    - Imposta layout: Dropdown per selezionare domini, tabella di confronto,
+#      notifiche, e filtri
+# =============================================================================
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Confronto Permission Domain"
 
@@ -154,7 +178,16 @@ app.layout = dbc.Container([
             ]
         ), width=12)
     ]),
-    dbc.Alert(id="notification-alert", dismissable=True, is_open=False, duration=4000),
+    dbc.Alert(id="notification-alert", dismissable=True, is_open=False, duration=5000),
+    dbc.Toast(
+        id="toast-message",
+        header="Notifica",
+        icon="primary",
+        is_open=False,
+        dismissable=True,
+        duration=4000,
+        style={"position": "fixed", "top": 10, "right": 10, "width": 350}
+    ),
     dbc.Offcanvas(
         id="filter-status",
         title="Filtra per Status",
@@ -179,6 +212,10 @@ app.layout = dbc.Container([
     dcc.Store(id="old-data", storage_type='memory')
 ], fluid=True)
 
+# =============================================================================
+#  SEZIONE: Funzione di supporto per popolamento dropdown
+#    - get_domains_options: recupera i domini dal DB e li trasforma in opzioni
+# =============================================================================
 def get_domains_options():
     try:
         with connect_to_db() as conn:
@@ -187,67 +224,89 @@ def get_domains_options():
     except Exception:
         return []
 
+# =============================================================================
+#  SEZIONE: Callback principale
+#    - Gestisce il confronto, l'applicazione dei filtri, e l'aggiornamento
+#      (update/insert/delete) tramite la tabella
+# =============================================================================
 @app.callback(
-    [Output('left-domains', 'options'),
-     Output('right-domains', 'options'),
-     Output("comparison-table", "data"),
-     Output("notification-alert", "children"),
-     Output("notification-alert", "is_open"),
-     Output("old-data", "data"),
-     Output("filter-status", "is_open")],
-    [Input("compare-button", "n_clicks"),
-     Input("apply-filter", "n_clicks"),
-     Input("comparison-table", "data_timestamp"),
-     Input("comparison-table", "active_cell"),
-     Input("open-filter-button", "n_clicks")],
-    [State("left-domains", "value"),
-     State("right-domains", "value"),
-     State("toggle-notifications", "value"),
-     State("status-filter", "value"),
-     State("old-data", "data"),
-     State("comparison-table", "data")]
+    [
+        Output('left-domains', 'options'),
+        Output('right-domains', 'options'),
+        Output("comparison-table", "data"),
+        Output("notification-alert", "children"),
+        Output("notification-alert", "is_open"),
+        Output("toast-message", "children"),
+        Output("toast-message", "is_open"),
+        Output("old-data", "data"),
+        Output("filter-status", "is_open")
+    ],
+    [
+        Input("compare-button", "n_clicks"),
+        Input("apply-filter", "n_clicks"),
+        Input("comparison-table", "data_timestamp"),
+        Input("comparison-table", "active_cell"),
+        Input("open-filter-button", "n_clicks")
+    ],
+    [
+        State("left-domains", "value"),
+        State("right-domains", "value"),
+        State("toggle-notifications", "value"),
+        State("status-filter", "value"),
+        State("old-data", "data"),
+        State("comparison-table", "data")
+    ]
 )
 def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_cell,
                   open_filter_clicks, left_domains, right_domains,
                   notifications_enabled, status_filter, old_data, table_data):
-
-    # Valori di default per l'output
+    # =========================================================================
+    #  SEZIONE: Inizializzazione valori di ritorno e recupero opzioni domini
+    # =========================================================================
     comparison_data = dash.no_update
     alert_children = dash.no_update
     alert_is_open = False
+    toast_message = dash.no_update
+    toast_is_open = False
     new_old_data = dash.no_update
     filter_is_open = dash.no_update
 
-    # Opzioni domini
+    # Recupera le opzioni per i dropdown
     domains_options = get_domains_options()
 
-    # Determina il trigger
+    # Determina quale elemento ha scatenato il callback
     triggered_id = ctx.triggered_id
 
-    # Toggle pannello filtri
+    # =========================================================================
+    #  SEZIONE: Apertura/chiusura offcanvas filtri
+    # =========================================================================
     if triggered_id == "open-filter-button":
-        # Se open_filter_clicks è stato premuto, togglo lo stato
         if open_filter_clicks:
             if filter_is_open is dash.no_update:
-                # Se non c'è uno stato precedente, assumo chiuso
                 filter_is_open = True
             else:
                 filter_is_open = not filter_is_open
         else:
-            filter_is_open = True  # Se non cliccato prima, apri
+            filter_is_open = True
 
-    # Se è stato premuto "Confronta"
+    # =========================================================================
+    #  SEZIONE: Confronto (pulsante "Confronta")
+    # =========================================================================
     if triggered_id == "compare-button":
         if not left_domains or not right_domains:
             alert_children = "Seleziona i domini per il confronto."
             alert_is_open = notifications_enabled
-            # Ritorno vuoto perché non posso confrontare
-            return domains_options, domains_options, [], alert_children, alert_is_open, [], filter_is_open
+            toast_message = alert_children
+            toast_is_open = notifications_enabled
+            return domains_options, domains_options, [], alert_children, alert_is_open, toast_message, toast_is_open, [], filter_is_open
+
         comparison = compare_permissions(left_domains, right_domains)
         if comparison.empty:
             alert_children = "Nessun dato disponibile per il confronto."
             alert_is_open = notifications_enabled
-            return domains_options, domains_options, [], alert_children, alert_is_open, [], filter_is_open
+            toast_message = alert_children
+            toast_is_open = notifications_enabled
+            return domains_options, domains_options, [], alert_children, alert_is_open, toast_message, toast_is_open, [], filter_is_open
 
         if status_filter:
             comparison = comparison[comparison["Status"].isin(status_filter)]
@@ -255,17 +314,22 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
         comparison_data = comparison.to_dict("records")
         alert_children = "Confronto completato."
         alert_is_open = notifications_enabled
+        toast_message = alert_children
+        toast_is_open = notifications_enabled
         new_old_data = comparison.to_dict("records")
 
-        return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
+        return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
 
-    # Se è stato premuto "Applica Filtro"
+    # =========================================================================
+    #  SEZIONE: Applicazione filtro (pulsante "Applica Filtro")
+    # =========================================================================
     if triggered_id == "apply-filter":
         if not old_data:
-            # Non c'è niente da filtrare
             alert_children = "Nessun dato disponibile per il confronto."
             alert_is_open = notifications_enabled
-            return domains_options, domains_options, [], alert_children, alert_is_open, [], filter_is_open
+            toast_message = alert_children
+            toast_is_open = notifications_enabled
+            return domains_options, domains_options, [], alert_children, alert_is_open, toast_message, toast_is_open, [], filter_is_open
 
         df = pd.DataFrame(old_data)
         if status_filter:
@@ -274,26 +338,33 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
         comparison_data = df.to_dict("records")
         alert_children = "Filtro applicato."
         alert_is_open = notifications_enabled
+        toast_message = alert_children
+        toast_is_open = notifications_enabled
         new_old_data = df.to_dict("records")
 
-        return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
+        return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
 
-    # Gestione modifica in tabella (ACTION_right) o click su Action/Delete
+    # =========================================================================
+    #  SEZIONE: Gestione modifiche/azioni in tabella (Action/Delete)
+    # =========================================================================
     if triggered_id == "comparison-table":
-        # Se non ci sono dati per la tabella o old_data, non faccio nulla
         if not table_data or not old_data or not left_domains or not right_domains:
-            return domains_options, domains_options, dash.no_update, dash.no_update, dash.no_update, dash.no_update, filter_is_open
+            return domains_options, domains_options, dash.no_update, dash.no_update, dash.no_update, toast_message, toast_is_open, dash.no_update, filter_is_open
 
-        # Se ho cliccato su una cella (Action o Delete)
         if active_cell:
             col = active_cell.get("column_id")
             row_data = table_data[active_cell["row"]]
 
+            # -----------------------------------------------------------------
+            #  Eliminazione permesso (colonna "Delete")
+            # -----------------------------------------------------------------
             if col == "Delete":
                 if row_data["Delete"] == "-":
                     alert_children = "Nessuna azione disponibile per questo record."
                     alert_is_open = notifications_enabled
-                    return domains_options, domains_options, table_data, alert_children, alert_is_open, old_data, filter_is_open
+                    toast_message = alert_children
+                    toast_is_open = notifications_enabled
+                    return domains_options, domains_options, table_data, alert_children, alert_is_open, toast_message, toast_is_open, old_data, filter_is_open
                 try:
                     with connect_to_db() as conn:
                         result = delete_permission(
@@ -308,22 +379,30 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
                     comparison_data = updated.to_dict("records")
                     alert_children = result
                     alert_is_open = notifications_enabled
+                    toast_message = result
+                    toast_is_open = notifications_enabled
                     new_old_data = comparison_data
-                    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
+                    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
                 except Exception as e:
                     alert_children = f"Errore durante l'eliminazione: {str(e)}"
                     alert_is_open = notifications_enabled
-                    return domains_options, domains_options, table_data, alert_children, alert_is_open, old_data, filter_is_open
+                    toast_message = alert_children
+                    toast_is_open = notifications_enabled
+                    return domains_options, domains_options, table_data, alert_children, alert_is_open, toast_message, toast_is_open, old_data, filter_is_open
 
+            # -----------------------------------------------------------------
+            #  Aggiornamento/Inserimento permesso (colonna "Action")
+            # -----------------------------------------------------------------
             elif col == "Action":
                 if row_data["Action"] == "-":
                     alert_children = "Nessuna azione disponibile per questo record."
                     alert_is_open = notifications_enabled
-                    return domains_options, domains_options, table_data, alert_children, alert_is_open, old_data, filter_is_open
+                    toast_message = alert_children
+                    toast_is_open = notifications_enabled
+                    return domains_options, domains_options, table_data, alert_children, alert_is_open, toast_message, toast_is_open, old_data, filter_is_open
                 try:
                     with connect_to_db() as conn:
                         if row_data["Status"] == "Unico a Sinistra":
-                            # Non esiste a destra, inserisco nel primo dominio a destra
                             result = update_or_insert_permission(
                                 conn,
                                 ext_id=right_domains[0],
@@ -345,51 +424,24 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
                     comparison_data = updated.to_dict("records")
                     alert_children = result
                     alert_is_open = notifications_enabled
+                    toast_message = result
+                    toast_is_open = notifications_enabled
                     new_old_data = comparison_data
-                    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
+                    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
                 except Exception as e:
                     alert_children = f"Errore durante l'aggiornamento: {str(e)}"
                     alert_is_open = notifications_enabled
-                    return domains_options, domains_options, table_data, alert_children, alert_is_open, old_data, filter_is_open
+                    toast_message = alert_children
+                    toast_is_open = notifications_enabled
+                    return domains_options, domains_options, table_data, alert_children, alert_is_open, toast_message, toast_is_open, old_data, filter_is_open
 
-        # Se è un evento di data_timestamp (modifica nella cella ACTION_right)
-        if data_timestamp:
-            old_df = pd.DataFrame(old_data)
-            new_df = pd.DataFrame(table_data)
+    # =========================================================================
+    #  SEZIONE: Ritorno di default (se nessuna condizione di trigger speciale)
+    # =========================================================================
+    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
 
-            merged = old_df.merge(new_df, on=["EXT_ID_left","NAME","EXT_ID_right","Status","Action","Delete","ACTION_left"], suffixes=("_old",""))
-            changed_rows = merged[merged["ACTION_right_old"] != merged["ACTION_right"]]
-
-            if not changed_rows.empty:
-                # Aggiorno il DB per ogni riga cambiata
-                try:
-                    with connect_to_db() as conn:
-                        for _, row in changed_rows.iterrows():
-                            ext_id_dest = row["EXT_ID_right"] or row["EXT_ID_left"]
-                            update_or_insert_permission(
-                                conn,
-                                ext_id=ext_id_dest,
-                                name=row["NAME"],
-                                action=row["ACTION_right"]
-                            )
-
-                    # Ricarico i dati dal DB
-                    updated = compare_permissions(left_domains, right_domains)
-                    if status_filter:
-                        updated = updated[updated["Status"].isin(status_filter)]
-                    comparison_data = updated.to_dict("records")
-                    alert_children = "Modifica salvata."
-                    alert_is_open = notifications_enabled
-                    new_old_data = comparison_data
-                    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
-
-                except Exception as e:
-                    alert_children = f"Errore durante l'aggiornamento: {str(e)}"
-                    alert_is_open = notifications_enabled
-                    return domains_options, domains_options, table_data, alert_children, alert_is_open, old_data, filter_is_open
-
-    # Se nessun trigger specifico ha modificato lo stato, ritorno i valori di default
-    return domains_options, domains_options, comparison_data, alert_children, alert_is_open, new_old_data, filter_is_open
-
+# =============================================================================
+#  SEZIONE: Avvio dell'app
+# =============================================================================
 if __name__ == "__main__":
     app.run_server(debug=True)
