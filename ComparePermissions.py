@@ -17,6 +17,7 @@ def connect_to_db():
     )
     return conn
 
+
 # =============================================================================
 #  SEZIONE: Funzioni per il recupero e la gestione dei permessi
 #    - fetch_permissions: estrazione dei permessi in base a una lista di domini
@@ -38,7 +39,7 @@ def fetch_permissions(conn, domains):
     return pd.DataFrame(rows, columns=columns)
 
 def fetch_permission_domains(conn):
-    query = "SELECT DISTINCT EXT_ID FROM PERMISSION"
+    query = "SELECT DMN_ID FROM DOMAIN"
     with conn.cursor() as cursor:
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -289,6 +290,55 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
         else:
             filter_is_open = True
 
+    # ----------------------------------------
+    # Gestione Modifica ACTION_right
+    # ----------------------------------------
+    if triggered_id == "comparison-table" and data_timestamp:
+        if not table_data or not old_data or not right_domains:
+            return (
+                domains_options, domains_options, dash.no_update,
+                dash.no_update, False,
+                toast_message, toast_is_open,
+                dash.no_update, filter_is_open
+            )
+
+        old_df = pd.DataFrame(old_data)
+        new_df = pd.DataFrame(table_data)
+
+        # Trova le righe modificate
+        changes = old_df.merge(new_df, on=["EXT_ID_left", "NAME", "EXT_ID_right", "Status", "Action", "Delete", "ACTION_left"], suffixes=("_old", ""))
+        modified_rows = changes[changes["ACTION_right_old"] != changes["ACTION_right"]]
+
+        if not modified_rows.empty:
+            try:
+                with connect_to_db() as conn:
+                    for _, row in modified_rows.iterrows():
+                        ext_id = row["EXT_ID_right"] or row["EXT_ID_left"]
+                        update_or_insert_permission(
+                            conn,
+                            ext_id=ext_id,
+                            name=row["NAME"],
+                            action=row["ACTION_right"]
+                        )
+
+                toast_message = "Modifica salvata con successo."
+                updated_comparison = compare_permissions(left_domains, right_domains).to_dict("records")
+                new_old_data = updated_comparison
+                return (
+                    domains_options, domains_options,
+                    updated_comparison, dash.no_update, False,
+                    toast_message, True,
+                    new_old_data, filter_is_open
+                )
+            except Exception as e:
+                toast_message = f"Errore durante l'aggiornamento: {str(e)}"
+                return (
+                    domains_options, domains_options,
+                    dash.no_update, dash.no_update, False,
+                    toast_message, True,
+                    dash.no_update, filter_is_open
+                )
+
     # =========================================================================
     #  SEZIONE: Confronto (pulsante "Confronta")
     # =========================================================================
@@ -440,8 +490,10 @@ def main_callback(compare_clicks, apply_filter_clicks, data_timestamp, active_ce
     # =========================================================================
     return domains_options, domains_options, comparison_data, alert_children, alert_is_open, toast_message, toast_is_open, new_old_data, filter_is_open
 
+
+
 # =============================================================================
 #  SEZIONE: Avvio dell'app
 # =============================================================================
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run_server(debug=False)

@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c9919a4f-780a-42fa-9392-8d75a728db0f" name="Changes" comment="Risolto bug su CLASS vuota con nuovo record a destra">
+    <list default="true" id="c9919a4f-780a-42fa-9392-8d75a728db0f" name="Changes" comment="Aggiunto dei commenti nel codice">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ComparePermissions.py" beforeDir="false" afterPath="$PROJECT_DIR$/ComparePermissions.py" afterDir="false" />
     </list>
@@ -144,7 +144,15 @@
       <option name="project" value="LOCAL" />
       <updated>1735831200307</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Aggiunto dei commenti nel codice">
+      <option name="closed" value="true" />
+      <created>1735890247347</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1735890247347</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="Vcs.Log.History.Properties">
@@ -166,6 +174,7 @@
     <MESSAGE value="Rivisto il sistema di notifiche" />
     <MESSAGE value="Risolto bug su cancellazione multipla." />
     <MESSAGE value="Risolto bug su CLASS vuota con nuovo record a destra" />
-    <option name="LAST_COMMIT_MESSAGE" value="Risolto bug su CLASS vuota con nuovo record a destra" />
+    <MESSAGE value="Aggiunto dei commenti nel codice" />
+    <option name="LAST_COMMIT_MESSAGE" value="Aggiunto dei commenti nel codice" />
   </component>
 </project>
