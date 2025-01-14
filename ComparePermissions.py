@@ -3,19 +3,24 @@ from dash import Dash, dash_table, html, dcc, Input, Output, State, ctx
 import pandas as pd
 import jaydebeapi
 import dash_bootstrap_components as dbc
+from decouple import config
 
 # =============================================================================
 #  SEZIONE: Connessione al database
 #    - connect_to_db: crea una connessione a DB2/AS400 tramite il driver JDBC
 # =============================================================================
+# =============================================================================
+#  SEZIONE: Connessione al database
+# =============================================================================
 def connect_to_db():
     conn = jaydebeapi.connect(
         'com.ibm.as400.access.AS400JDBCDriver',
-        'jdbc:as400://p10lug/BPSAUTHNEW',  # Modifica con i tuoi dettagli
-        ['nextlux', 'next'],               # Credenziali
-        'C:/temp/jt400.jar'                # Path al driver JDBC
+        f'jdbc:as400://{config("DB_HOST")}/{config("DB_DATABASE")}',  # Host e database dal file .env
+        [config("DB_USER"), config("DB_PASSWORD")],  # Credenziali dal file .env
+        config("DB_DRIVER_PATH")  # Path al driver JDBC dal file .env
     )
     return conn
+
 
 
 # =============================================================================
