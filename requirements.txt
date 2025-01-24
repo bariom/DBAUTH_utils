@@ -1,0 +1,5 @@
+dash
+jaydebeapi
+dash-bootstrap-components
+python-decouple
+pandas
