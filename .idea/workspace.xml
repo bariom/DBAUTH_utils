@@ -4,9 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c9919a4f-780a-42fa-9392-8d75a728db0f" name="Changes" comment="Aggiunto dei commenti nel codice">
+    <list default="true" id="c9919a4f-780a-42fa-9392-8d75a728db0f" name="Changes" comment="aggiunto il menuparser">
+      <change afterPath="$PROJECT_DIR$/ComparePermissions_cloud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ComparePermissions.py" beforeDir="false" afterPath="$PROJECT_DIR$/ComparePermissions.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -34,16 +35,26 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ASKED_ADD_EXTERNAL_FILES&quot;: &quot;true&quot;,
-    &quot;Python.ComparePermissions.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_ADD_EXTERNAL_FILES": "true",
+    "Python.ComparePermissions.executor": "Run",
+    "Python.MenuParser.executor": "Run",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "master",
+    "last_opened_file_path": "C:/Users/BariOm/PycharmProjects/DBAUTH_utils"
   }
-}</component>
-  <component name="RunManager">
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\BariOm\PycharmProjects\DBAUTH_utils" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\BariOm\PycharmProjects\DBAUTH_utils" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Python.ComparePermissions">
     <configuration name="ComparePermissions" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="DBAUTH_utils" />
       <option name="ENV_FILES" value="" />
@@ -66,9 +77,32 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="MenuParser" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="DBAUTH_utils" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/MenuParser.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
         <item itemvalue="Python.ComparePermissions" />
+        <item itemvalue="Python.MenuParser" />
       </list>
     </recent_temporary>
   </component>
@@ -152,7 +186,31 @@
       <option name="project" value="LOCAL" />
       <updated>1735890247347</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="Possibilità di modificare le actions di destra con doppio click.">
+      <option name="closed" value="true" />
+      <created>1736860786702</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1736860786702</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Esternalizzato la config con python-decouple">
+      <option name="closed" value="true" />
+      <created>1736861332741</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1736861332741</updated>
+    </task>
+    <task id="LOCAL-00011" summary="aggiunto il menuparser">
+      <option name="closed" value="true" />
+      <created>1737706299598</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1737706299598</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="Vcs.Log.History.Properties">
@@ -175,6 +233,9 @@
     <MESSAGE value="Risolto bug su cancellazione multipla." />
     <MESSAGE value="Risolto bug su CLASS vuota con nuovo record a destra" />
     <MESSAGE value="Aggiunto dei commenti nel codice" />
-    <option name="LAST_COMMIT_MESSAGE" value="Aggiunto dei commenti nel codice" />
+    <MESSAGE value="Possibilità di modificare le actions di destra con doppio click." />
+    <MESSAGE value="Esternalizzato la config con python-decouple" />
+    <MESSAGE value="aggiunto il menuparser" />
+    <option name="LAST_COMMIT_MESSAGE" value="aggiunto il menuparser" />
   </component>
 </project>
