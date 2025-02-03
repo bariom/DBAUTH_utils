@@ -8,6 +8,10 @@ from decouple import config
 # =============================================================================
 #  SEZIONE: Connessione al database
 # =============================================================================
+DB_HOST=config("DB_HOST", cast=str)
+DB_DATABASE=config("DB_DATABASE", cast=str)
+
+
 def connect_to_db():
     conn = jaydebeapi.connect(
         'com.ibm.as400.access.AS400JDBCDriver',
@@ -119,8 +123,13 @@ app.title = "Confronto Permission Domain"
 
 app.layout = dbc.Container([
     dbc.Row([
-        dbc.Col(html.H3("Confronto Permission Domain", className="text-center my-3"), width=12)
+        dbc.Col(html.H2("Gestione Permessi - Confronto Domains", className="text-center my-3"), width=12)
     ]),
+    dbc.Row([
+        dbc.Col(html.H5(f"🔗 Connessione attiva su: {DB_HOST} | Database: {DB_DATABASE}",
+                        className="text-center text-muted mb-3"), width=12)
+    ]),
+
     dbc.Row([
         dbc.Col(dcc.Dropdown(id='left-domains', multi=True,
                              placeholder="Seleziona Domini Sorgente", className="mb-3"),
