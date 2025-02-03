@@ -4,36 +4,55 @@ import pandas as pd
 import jaydebeapi
 import dash_bootstrap_components as dbc
 import os
-#from decouple import config
 
 # =============================================================================
-#  SEZIONE: Connessione al database
-#    - connect_to_db: crea una connessione a DB2/AS400 tramite il driver JDBC
+#  SECTION: Database connection
+#    - connect_to_db: creates a connection to DB2/AS400 via JDBC driver
 # =============================================================================
-# =============================================================================
-#  SEZIONE: Connessione al database
-# =============================================================================
+
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_DATABASE = os.getenv("DB_DATABASE", "default_db")
 DB_USER = os.getenv("DB_USER", "user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
-#DB_DRIVER_PATH_DOCKER = os.getenv("DB_DRIVER_PATH_DOCKER", "/path/to/db2jcc.jar")
 
-print(f"Connettendo a {DB_HOST}/{DB_DATABASE} con l'utente {DB_USER}")
+print(f"Connecting to {DB_HOST}/{DB_DATABASE} with user {DB_USER}")
+
+# Simple in-memory cache for fetched permissions
+permission_cache = {}
 
 def connect_to_db():
     conn = jaydebeapi.connect(
         'com.ibm.as400.access.AS400JDBCDriver',
         f'jdbc:as400://{DB_HOST}/{DB_DATABASE}',
         [DB_USER, DB_PASSWORD],
-        "/app/jt400.jar"
+        "/app/jt400.jar"  # Adjust the path to your .jar as needed
     )
     return conn
 
 # =============================================================================
-#  SEZIONE: Funzioni per il recupero e la gestione dei permessi
+#  SECTION: Functions for retrieving and managing permissions
 # =============================================================================
+def fetch_permission_domains(conn):
+    query = "SELECT DMN_ID FROM DOMAIN"
+    with conn.cursor() as cursor:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+    return [row[0] for row in rows]
+
 def fetch_permissions(conn, domains):
+    """
+    Fetches permissions from the specified domains.
+    If they are in the in-memory cache, returns them directly.
+    Otherwise, executes the query, stores them in cache, then returns them.
+    """
+    # Create a key based on the domains (sorted to avoid duplicates)
+    domains_key = tuple(sorted(domains))
+
+    # If the key is in cache, return the data directly
+    if domains_key in permission_cache:
+        return permission_cache[domains_key]
+
+    # Otherwise, fetch from the DB
     placeholder = ', '.join(['?' for _ in domains])
     query = f"""
     SELECT EXT_ID, NAME, ACTION
@@ -44,16 +63,17 @@ def fetch_permissions(conn, domains):
         cursor.execute(query, domains)
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
-    return pd.DataFrame(rows, columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
 
-def fetch_permission_domains(conn):
-    query = "SELECT DMN_ID FROM DOMAIN"
-    with conn.cursor() as cursor:
-        cursor.execute(query)
-        rows = cursor.fetchall()
-    return [row[0] for row in rows]
+    # Store in cache and return
+    permission_cache[domains_key] = df
+    return df
 
 def update_or_insert_permission(conn, ext_id, name, action):
+    """
+    Updates or inserts a record in the PERMISSION table.
+    Invalidates the cache after the operation.
+    """
     class_name = 'ch.eri.core.security.TaskPermission'
     with conn.cursor() as cursor:
         query_check = "SELECT COUNT(*) FROM PERMISSION WHERE EXT_ID = ? AND NAME = ?"
@@ -63,25 +83,34 @@ def update_or_insert_permission(conn, ext_id, name, action):
             query_update = "UPDATE PERMISSION SET ACTION = ? WHERE EXT_ID = ? AND NAME = ?"
             cursor.execute(query_update, [action, ext_id, name])
             conn.commit()
-            return f"Aggiornato: {name} in {ext_id} con ACTION = {action}"
+            result = f"Updated: {name} in {ext_id} with ACTION = {action}"
         else:
             query_insert = "INSERT INTO PERMISSION (EXT_ID, CLASS, NAME, ACTION) VALUES (?, ?, ?, ?)"
             cursor.execute(query_insert, [ext_id, class_name, name, action])
             conn.commit()
-            return f"Inserito: {name} in {ext_id} con ACTION = {action}"
+            result = f"Inserted: {name} in {ext_id} with ACTION = {action}"
+
+    # Invalidate the cache since data changed
+    permission_cache.clear()
+    return result
 
 def delete_permission(conn, ext_id, name, action):
+    """
+    Deletes a record from the PERMISSION table.
+    Invalidates the cache after the operation.
+    """
     with conn.cursor() as cursor:
         query_delete = "DELETE FROM PERMISSION WHERE EXT_ID = ? AND NAME = ? AND ACTION = ?"
         cursor.execute(query_delete, [ext_id, name, action])
         conn.commit()
-        return f"Eliminato: {name} con ACTION = {action} da {ext_id}"
+    permission_cache.clear()
+    return f"Deleted: {name} with ACTION = {action} from {ext_id}"
 
-
-# =============================================================================
-#  SEZIONE: Confronto dei permessi
-# =============================================================================
 def compare_permissions(left_domains, right_domains):
+    """
+    Compares permissions from multiple source domains (left) with one or more target domains (right).
+    Returns a DataFrame with the comparison status.
+    """
     with connect_to_db() as conn:
         left_permissions = fetch_permissions(conn, left_domains)
         right_permissions = fetch_permissions(conn, right_domains)
@@ -94,128 +123,154 @@ def compare_permissions(left_domains, right_domains):
         suffixes=("_left", "_right"),
         indicator=True
     )
-
-    comparison["ACTION_left"] = comparison["ACTION_left"].astype(str).replace("nan", "-")
-    comparison["ACTION_right"] = comparison["ACTION_right"].astype(str).replace("nan", "-")
+    comparison["ACTION_left"] = (
+        comparison["ACTION_left"]
+        .astype(str)
+        .replace("nan", "-")
+    )
+    comparison["ACTION_right"] = (
+        comparison["ACTION_right"]
+        .astype(str)
+        .replace("nan", "-")
+    )
 
     def classify_status(row):
         if row["ACTION_left"] == row["ACTION_right"]:
-            return "Comuni"
+            return "Common"
         elif row["ACTION_left"] == "-":
-            return "Unico a Destra"
+            return "Only in Right"
         elif row["ACTION_right"] == "-":
-            return "Unico a Sinistra"
+            return "Only in Left"
         else:
-            return "Differenti"
+            return "Different"
 
     comparison["Status"] = comparison.apply(classify_status, axis=1)
 
-    # Colonne per azioni
+    # If they differ or are "Common", show the "Update" action to edit target
     comparison["Action"] = comparison.apply(
-        lambda row: "Aggiorna" if row["Status"] not in ["Comuni", "Unico a Destra"] else "-",
+        lambda row: "Update" if row["Status"] not in ["Common", "Only in Right"] else "-",
         axis=1
     )
-    comparison["Delete"] = comparison.apply(
-        lambda row: "Elimina" if row["Status"] in ["Comuni", "Unico a Destra"] else "-",
-        axis=1
-    )
+
+    # Always "Delete" if EXT_ID_right is valid in the target domain
+    def delete_option(row):
+        ext_id_right = row.get("EXT_ID_right")
+        if ext_id_right and (str(ext_id_right).strip().lower() not in ["", "nan", "-"]):
+            return "Delete"
+        return "-"
+
+    comparison["Delete"] = comparison.apply(delete_option, axis=1)
 
     return comparison
 
-
 # =============================================================================
-#  SEZIONE: Inizializzazione dell'app Dash con Bootstrap
+#  SECTION: Dash app layout
 # =============================================================================
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "Confronto Permission Domain"
+app.title = "Permissions Management - Domain Comparison"
 
 app.layout = dbc.Container([
     dbc.Row([
-        dbc.Col(html.H2("Gestione Permessi - Confronto Domains", className="text-center my-3"), width=12)
+        dbc.Col(html.H2("Permissions Management - Domain Comparison", className="text-center my-3"), width=12)
     ]),
     dbc.Row([
-        dbc.Col(html.H5(f"🔗 Connessione attiva su: {DB_HOST} | Database: {DB_DATABASE}",
+        dbc.Col(html.H5(f"🔗 Active connection to: {DB_HOST} | Database: {DB_DATABASE}",
                         className="text-center text-muted mb-3"), width=12)
     ]),
     dbc.Row([
-        dbc.Col(dcc.Dropdown(id='left-domains', multi=True,
-                             placeholder="Seleziona Domini Sorgente", className="mb-3"),
+        dbc.Col(dcc.Dropdown(
+                    id='left-domains',
+                    multi=True,
+                    placeholder="Select Source Domains",
+                    className="mb-3"
+                ),
                 width=5),
-        dbc.Col(dcc.Dropdown(id='right-domains', multi=False,
-                             placeholder="Seleziona Dominio Target", className="mb-3"),
+        dbc.Col(dcc.Dropdown(
+                    id='right-domains',
+                    multi=False,
+                    placeholder="Select Target Domain",
+                    className="mb-3"
+                ),
                 width=5),
-        dbc.Col(html.Button("Confronta", id="compare-button", n_clicks=0,
-                            className="btn btn-primary"), width=2)
+        dbc.Col(html.Button(
+                    "Compare",
+                    id="compare-button",
+                    n_clicks=0,
+                    className="btn btn-primary"
+                ),
+                width=2)
     ], justify="between"),
-
+    dbc.Row([
+        dbc.Col(
+            dcc.Input(
+                id="filter-name",
+                placeholder="Filter by NAME",
+                type="text",
+                value="",
+                className="mb-3"
+            ),
+            width=4
+        )
+    ]),
     dbc.Row([
         dbc.Col([
-            dbc.Switch(id="toggle-notifications", label="Abilita notifiche", value=True, className="me-3")
+            dbc.Switch(id="toggle-notifications", label="Enable notifications", value=True, className="me-3")
         ], width=12, className="mb-3 d-flex justify-content-start align-items-center")
     ]),
-
-    # Tabella con filtro nativo
     dbc.Row([
         dbc.Col(dash_table.DataTable(
             id="comparison-table",
             columns=[
-                {"name": "Dominio Sorgente", "id": "EXT_ID_left"},
-                {"name": "NAME", "id": "NAME"},
-                {"name": "ACTION Sorgente", "id": "ACTION_left"},
-                {"name": "Dominio Target", "id": "EXT_ID_right"},
-                {"name": "ACTION Target", "id": "ACTION_right", "editable": True},
-                {"name": "Status", "id": "Status"},
-                {"name": "Action", "id": "Action", "presentation": "markdown"},
-                {"name": "Delete", "id": "Delete", "presentation": "markdown"}
+                {"name": "Source Domain", "id": "EXT_ID_left", "editable": False},
+                {"name": "NAME", "id": "NAME", "editable": False},
+                {"name": "Source ACTION", "id": "ACTION_left", "editable": False},
+                {"name": "Target Domain", "id": "EXT_ID_right", "editable": False},
+                {"name": "Target ACTION", "id": "ACTION_right", "editable": True},
+                {"name": "Status", "id": "Status", "editable": False},
+                {"name": "Action", "id": "Action", "presentation": "markdown", "editable": False},
+                {"name": "Delete", "id": "Delete", "presentation": "markdown", "editable": False}
             ],
-            editable=True,
+            editable=False,  # Only columns with "editable=True" can be modified
             page_size=1000,
-            filter_action="native",  # <--- Filtro nativo
             style_table={"overflowX": "auto"},
             style_cell={"textAlign": "left"},
             style_data_conditional=[
                 {
-                    'if': {'filter_query': '{Status} = "Comuni"'},
+                    'if': {'filter_query': '{Status} = "Common"'},
                     'backgroundColor': '#d4edda',
                     'color': '#155724',
                 },
                 {
-                    'if': {'filter_query': '{Status} = "Unico a Sinistra"'},
+                    'if': {'filter_query': '{Status} = "Only in Left"'},
                     'backgroundColor': '#f8d7da',
                     'color': '#721c24',
                 },
                 {
-                    'if': {'filter_query': '{Status} = "Unico a Destra"'},
+                    'if': {'filter_query': '{Status} = "Only in Right"'},
                     'backgroundColor': '#d1ecf1',
                     'color': '#0c5460',
                 },
                 {
-                    'if': {'filter_query': '{Status} = "Differenti"'},
+                    'if': {'filter_query': '{Status} = "Different"'},
                     'backgroundColor': '#fff3cd',
                     'color': '#856404',
                 },
             ]
         ), width=12)
     ]),
-
     dbc.Alert(id="notification-alert", dismissable=True, is_open=False, duration=5000),
     dbc.Toast(
         id="toast-message",
-        header="Notifica",
+        header="Notification",
         icon="primary",
         is_open=False,
         dismissable=True,
         duration=4000,
         style={"position": "fixed", "top": 10, "right": 10, "width": 350}
     ),
-
     dcc.Store(id="old-data", storage_type='memory')
 ], fluid=True)
 
-
-# =============================================================================
-#  SEZIONE: Funzione di supporto per popolamento dropdown
-# =============================================================================
 def get_domains_options():
     try:
         with connect_to_db() as conn:
@@ -224,39 +279,39 @@ def get_domains_options():
     except Exception:
         return []
 
-
 # =============================================================================
-#  SEZIONE: Callback principale
+#  SECTION: Main Dash callback
 # =============================================================================
 @app.callback(
     [
-        Output('left-domains', 'options'),
-        Output('right-domains', 'options'),
-        Output("comparison-table", "data"),
-        Output("notification-alert", "children"),
-        Output("notification-alert", "is_open"),
-        Output("toast-message", "children"),
-        Output("toast-message", "is_open"),
-        Output("old-data", "data"),
+        dash.dependencies.Output('left-domains', 'options'),
+        dash.dependencies.Output('right-domains', 'options'),
+        dash.dependencies.Output("comparison-table", "data"),
+        dash.dependencies.Output("notification-alert", "children"),
+        dash.dependencies.Output("notification-alert", "is_open"),
+        dash.dependencies.Output("toast-message", "children"),
+        dash.dependencies.Output("toast-message", "is_open"),
+        dash.dependencies.Output("old-data", "data"),
     ],
     [
-        Input("compare-button", "n_clicks"),
-        Input("comparison-table", "data_timestamp"),
-        Input("comparison-table", "active_cell"),
+        dash.dependencies.Input("compare-button", "n_clicks"),
+        dash.dependencies.Input("filter-name", "value"),
+        dash.dependencies.Input("comparison-table", "data_timestamp"),
+        dash.dependencies.Input("comparison-table", "active_cell"),
     ],
     [
-        State("left-domains", "value"),
-        State("right-domains", "value"),
-        State("toggle-notifications", "value"),
-        State("old-data", "data"),
-        State("comparison-table", "data")
+        dash.dependencies.State("left-domains", "value"),
+        dash.dependencies.State("right-domains", "value"),
+        dash.dependencies.State("toggle-notifications", "value"),
+        dash.dependencies.State("old-data", "data"),
+        dash.dependencies.State("comparison-table", "data")
     ]
 )
-def main_callback(compare_clicks, data_timestamp, active_cell,
+def main_callback(compare_clicks, filter_name, data_timestamp, active_cell,
                   left_domains, right_domains,
                   notifications_enabled, old_data, table_data):
 
-    # Se right_domains è una stringa singola, la trasformiamo in lista
+    # If right_domains is a single string, transform it into a list
     if isinstance(right_domains, str):
         right_domains = [right_domains]
 
@@ -267,24 +322,20 @@ def main_callback(compare_clicks, data_timestamp, active_cell,
     toast_is_open = False
     new_old_data = dash.no_update
 
-    # Recupera le opzioni per i dropdown
     domains_options = get_domains_options()
-
     triggered_id = ctx.triggered_id
 
-    # ------------------ Modifica ACTION_right in tabella -------------------
+    # ------------------ Handle DataTable editing (ACTION_right changes) -------------
     if triggered_id == "comparison-table" and data_timestamp:
         if not table_data or not old_data or not right_domains:
-            return (
-                domains_options, domains_options, dash.no_update,
-                dash.no_update, False, toast_message, toast_is_open,
-                dash.no_update
-            )
+            return (domains_options, domains_options, dash.no_update,
+                    dash.no_update, False, toast_message, toast_is_open,
+                    dash.no_update)
 
         old_df = pd.DataFrame(old_data)
         new_df = pd.DataFrame(table_data)
 
-        # Righe modificate
+        # Find rows modified in ACTION_right
         changes = old_df.merge(
             new_df,
             on=["EXT_ID_left", "NAME", "EXT_ID_right", "Status", "Action", "Delete", "ACTION_left"],
@@ -296,100 +347,97 @@ def main_callback(compare_clicks, data_timestamp, active_cell,
             try:
                 with connect_to_db() as conn:
                     for _, row in modified_rows.iterrows():
-                        ext_id = row["EXT_ID_right"] or row["EXT_ID_left"]
+                        # If EXT_ID_right is not valid, use the selected target
+                        if (not row["EXT_ID_right"]) or (str(row["EXT_ID_right"]).strip().lower() in ["", "nan", "-"]):
+                            ext_id = right_domains[0]
+                        else:
+                            ext_id = row["EXT_ID_right"]
+
                         update_or_insert_permission(
                             conn,
                             ext_id=ext_id,
                             name=row["NAME"],
                             action=row["ACTION_right"]
                         )
-
-                toast_message = "Modifica salvata con successo."
-                updated_comparison = compare_permissions(left_domains, right_domains).to_dict("records")
+                toast_message = "Modification successfully saved."
+                updated_comparison = compare_permissions(left_domains, right_domains)
+                if filter_name:
+                    updated_comparison = updated_comparison[
+                        updated_comparison["NAME"].str.contains(filter_name, case=False, na=False)
+                    ]
+                updated_comparison = updated_comparison.to_dict("records")
                 new_old_data = updated_comparison
-                return (
-                    domains_options, domains_options,
-                    updated_comparison, dash.no_update, False,
-                    toast_message, True,
-                    new_old_data
-                )
+                return (domains_options, domains_options,
+                        updated_comparison, dash.no_update, False,
+                        toast_message, True,
+                        new_old_data)
             except Exception as e:
-                toast_message = f"Errore durante l'aggiornamento: {str(e)}"
-                return (
-                    domains_options, domains_options,
-                    dash.no_update, dash.no_update, False,
-                    toast_message, True,
-                    dash.no_update
-                )
+                toast_message = f"Error during update: {str(e)}"
+                return (domains_options, domains_options,
+                        dash.no_update, dash.no_update, False,
+                        toast_message, True,
+                        dash.no_update)
 
-    # ------------------ Pulsante "Confronta" ------------------
-    if triggered_id == "compare-button":
+    # ------------------ "Compare" button or filter_name change ---------------------
+    if triggered_id in ["compare-button", "filter-name"]:
         if not left_domains or not right_domains:
-            alert_children = "Seleziona i domini per il confronto."
+            alert_children = "Select the domains to compare."
             alert_is_open = notifications_enabled
             toast_message = alert_children
             toast_is_open = notifications_enabled
-            return (
-                domains_options, domains_options, [],
-                alert_children, alert_is_open,
-                toast_message, toast_is_open,
-                []
-            )
+            return (domains_options, domains_options, [],
+                    alert_children, alert_is_open,
+                    toast_message, toast_is_open,
+                    [])
 
         comparison = compare_permissions(left_domains, right_domains)
+        if filter_name:
+            comparison = comparison[comparison["NAME"].str.contains(filter_name, case=False, na=False)]
         if comparison.empty:
-            alert_children = "Nessun dato disponibile per il confronto."
+            alert_children = "No data available for comparison."
             alert_is_open = notifications_enabled
             toast_message = alert_children
             toast_is_open = notifications_enabled
-            return (
-                domains_options, domains_options, [],
-                alert_children, alert_is_open,
-                toast_message, toast_is_open,
-                []
-            )
+            return (domains_options, domains_options, [],
+                    alert_children, alert_is_open,
+                    toast_message, toast_is_open,
+                    [])
 
         comparison_data = comparison.to_dict("records")
-        alert_children = "Confronto completato."
+        alert_children = "Comparison completed."
         alert_is_open = notifications_enabled
         toast_message = alert_children
         toast_is_open = notifications_enabled
         new_old_data = comparison_data
 
-        return (
-            domains_options, domains_options,
-            comparison_data, alert_children, alert_is_open,
-            toast_message, toast_is_open,
-            new_old_data
-        )
+        return (domains_options, domains_options,
+                comparison_data, alert_children, alert_is_open,
+                toast_message, toast_is_open,
+                new_old_data)
 
-    # ------------------ Azioni in tabella: Action/Delete ------------------
+    # ------------------ Table Actions: "Action" / "Delete" columns ------------------
     if triggered_id == "comparison-table":
         if not table_data or not old_data or not left_domains or not right_domains:
-            return (
-                domains_options, domains_options, dash.no_update,
-                dash.no_update, dash.no_update,
-                toast_message, toast_is_open,
-                dash.no_update
-            )
+            return (domains_options, domains_options, dash.no_update,
+                    dash.no_update, dash.no_update,
+                    toast_message, toast_is_open,
+                    dash.no_update)
 
         if active_cell:
             col = active_cell.get("column_id")
             row_data = table_data[active_cell["row"]]
 
-            # 1. Eliminazione permesso (colonna "Delete")
+            # Deletion (Delete)
             if col == "Delete":
                 if row_data["Delete"] == "-":
-                    alert_children = "Nessuna azione disponibile per questo record."
+                    alert_children = "No action available for this record."
                     alert_is_open = notifications_enabled
                     toast_message = alert_children
                     toast_is_open = notifications_enabled
-                    return (
-                        domains_options, domains_options,
-                        table_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        old_data
-                    )
+                    return (domains_options, domains_options,
+                            table_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            old_data)
                 try:
                     with connect_to_db() as conn:
                         result = delete_permission(
@@ -399,97 +447,77 @@ def main_callback(compare_clicks, data_timestamp, active_cell,
                             action=row_data["ACTION_right"]
                         )
                     updated = compare_permissions(left_domains, right_domains)
+                    if filter_name:
+                        updated = updated[updated["NAME"].str.contains(filter_name, case=False, na=False)]
                     comparison_data = updated.to_dict("records")
                     alert_children = result
                     alert_is_open = notifications_enabled
                     toast_message = result
                     toast_is_open = notifications_enabled
                     new_old_data = comparison_data
-                    return (
-                        domains_options, domains_options,
-                        comparison_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        new_old_data
-                    )
+                    return (domains_options, domains_options,
+                            comparison_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            new_old_data)
                 except Exception as e:
-                    alert_children = f"Errore durante l'eliminazione: {str(e)}"
+                    alert_children = f"Error during deletion: {str(e)}"
                     alert_is_open = notifications_enabled
                     toast_message = alert_children
                     toast_is_open = notifications_enabled
-                    return (
-                        domains_options, domains_options,
-                        table_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        old_data
-                    )
+                    return (domains_options, domains_options,
+                            table_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            old_data)
 
-            # 2. Aggiornamento o Inserimento (colonna "Action")
+            # Update/Insert (Action column)
             elif col == "Action":
                 if row_data["Action"] == "-":
-                    alert_children = "Nessuna azione disponibile per questo record."
+                    alert_children = "No action available for this record."
                     alert_is_open = notifications_enabled
                     toast_message = alert_children
                     toast_is_open = notifications_enabled
-                    return (
-                        domains_options, domains_options,
-                        table_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        old_data
-                    )
+                    return (domains_options, domains_options,
+                            table_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            old_data)
                 try:
                     with connect_to_db() as conn:
-                        if row_data["Status"] == "Unico a Sinistra":
-                            result = update_or_insert_permission(
-                                conn,
-                                ext_id=right_domains[0],
-                                name=row_data["NAME"],
-                                action=row_data["ACTION_left"]
-                            )
-                        else:
-                            ext_id_dest = row_data["EXT_ID_right"] or row_data["EXT_ID_left"]
-                            result = update_or_insert_permission(
-                                conn,
-                                ext_id=ext_id_dest,
-                                name=row_data["NAME"],
-                                action=row_data["ACTION_left"]
-                            )
-
+                        result = update_or_insert_permission(
+                            conn,
+                            ext_id=right_domains[0],
+                            name=row_data["NAME"],
+                            action=row_data["ACTION_left"]
+                        )
                     updated = compare_permissions(left_domains, right_domains)
+                    if filter_name:
+                        updated = updated[updated["NAME"].str.contains(filter_name, case=False, na=False)]
                     comparison_data = updated.to_dict("records")
                     alert_children = result
                     alert_is_open = notifications_enabled
                     toast_message = result
                     toast_is_open = notifications_enabled
                     new_old_data = comparison_data
-                    return (
-                        domains_options, domains_options,
-                        comparison_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        new_old_data
-                    )
+                    return (domains_options, domains_options,
+                            comparison_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            new_old_data)
                 except Exception as e:
-                    alert_children = f"Errore durante l'aggiornamento: {str(e)}"
+                    alert_children = f"Error during update: {str(e)}"
                     alert_is_open = notifications_enabled
                     toast_message = alert_children
                     toast_is_open = notifications_enabled
-                    return (
-                        domains_options, domains_options,
-                        table_data, alert_children, alert_is_open,
-                        toast_message, toast_is_open,
-                        old_data
-                    )
+                    return (domains_options, domains_options,
+                            table_data, alert_children, alert_is_open,
+                            toast_message, toast_is_open,
+                            old_data)
 
-    # -------------- Ritorno di default --------------
-    return (
-        domains_options, domains_options,
-        comparison_data, alert_children, alert_is_open,
-        toast_message, toast_is_open,
-        new_old_data
-    )
-
+    return (domains_options, domains_options,
+            comparison_data, alert_children, alert_is_open,
+            toast_message, toast_is_open,
+            new_old_data)
 
 # =============================================================================
-#  SEZIONE: Avvio dell'app
+#  SECTION: Run the app
 # =============================================================================
 if __name__ == "__main__":
     app.run_server(host='0.0.0.0', port=8050, debug=False)
