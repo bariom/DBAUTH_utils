@@ -1,3 +1,7 @@
+"""
+Cerca nei repositories OLY i files .func e lista le funzionalità copiandole in Clipboard come "INSERT INTO"...
+Si può in seguito eseguire le queries in IBM ACS per popolare il permission domain ___GLOBAL___
+"""
 #!/usr/bin/env python3
 import os
 import xml.etree.ElementTree as ET
